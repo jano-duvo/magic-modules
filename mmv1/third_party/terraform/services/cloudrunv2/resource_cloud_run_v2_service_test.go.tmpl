@@ -8,6 +8,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
   "github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-provider-google/google/acctest"
   "github.com/hashicorp/terraform-provider-google/google/envvar"
 	"github.com/hashicorp/terraform-provider-google/google/services/cloudrunv2"
@@ -1977,4 +1978,111 @@ resource "google_cloud_run_v2_service" "default" {
   }
 }
 `, context)
+}
+
+// Regression coverage for hashicorp/terraform-provider-google#25464.
+// With a coarse top-level updateMask the second apply would PATCH the whole
+// `template` and revert the externally-set image; with the granular mask
+// emitted by pre_update/cloudrunv2_service_granular_update_mask.go.tmpl the
+// mask only contains `template.scaling.maxInstanceCount` so the out-of-band
+// image change must survive.
+func TestAccCloudRunV2Service_granularUpdateMaskRespectsIgnoreChanges(t *testing.T) {
+	acctest.SkipIfVcr(t)
+	t.Parallel()
+
+	suffix := acctest.RandString(t, 10)
+	serviceName := fmt.Sprintf("tf-test-cloudrun-mask-%s", suffix)
+	externalImage := "us-docker.pkg.dev/cloudrun/container/whereami"
+
+	context := map[string]interface{}{
+		"random_suffix":      suffix,
+		"max_instance_count": 5,
+	}
+	contextUpdated := map[string]interface{}{
+		"random_suffix":      suffix,
+		"max_instance_count": 10,
+	}
+
+	acctest.VcrTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.AccTestPreCheck(t) },
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories(t),
+		CheckDestroy:             testAccCheckCloudRunV2ServiceDestroyProducer(t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCloudRunV2Service_granularUpdateMask(context),
+			},
+			{
+				PreConfig: testAccCloudRunV2Service_externallyUpdateImage(t, serviceName, externalImage),
+				Config:    testAccCloudRunV2Service_granularUpdateMask(contextUpdated),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckCloudRunV2ServiceImageEquals(t, serviceName, externalImage),
+				),
+			},
+		},
+	})
+}
+
+func testAccCloudRunV2Service_granularUpdateMask(context map[string]interface{}) string {
+	return acctest.Nprintf(`
+resource "google_cloud_run_v2_service" "default" {
+  name     = "tf-test-cloudrun-mask-%{random_suffix}"
+  location = "us-central1"
+  deletion_protection = false
+
+  template {
+    scaling {
+      max_instance_count = %{max_instance_count}
+    }
+    containers {
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
+}
+`, context)
+}
+
+func testAccCloudRunV2Service_externallyUpdateImage(t *testing.T, serviceName, image string) func() {
+	return func() {
+		config := acctest.GoogleProviderConfig(t)
+		services := config.NewCloudRunV2Client(config.UserAgent).Projects.Locations.Services
+		qualified := fmt.Sprintf("projects/%s/locations/%s/services/%s", config.Project, config.Region, serviceName)
+		current, err := services.Get(qualified).Do()
+		if err != nil {
+			t.Fatalf("external read of %s failed: %s", qualified, err)
+		}
+		if len(current.Template.Containers) == 0 {
+			t.Fatalf("service %s has no containers to mutate", qualified)
+		}
+		current.Template.Containers[0].Image = image
+		op, err := services.Patch(qualified, current).UpdateMask("template").Do()
+		if err != nil {
+			t.Fatalf("external patch of %s failed: %s", qualified, err)
+		}
+		if err := cloudrunv2.RunAdminV2OperationWaitTime(config, op, config.Project, "External image update", config.UserAgent, 5*time.Minute); err != nil {
+			t.Fatalf("waiting for external patch: %s", err)
+		}
+	}
+}
+
+func testAccCheckCloudRunV2ServiceImageEquals(t *testing.T, serviceName, want string) resource.TestCheckFunc {
+	return func(_ *terraform.State) error {
+		config := acctest.GoogleProviderConfig(t)
+		services := config.NewCloudRunV2Client(config.UserAgent).Projects.Locations.Services
+		qualified := fmt.Sprintf("projects/%s/locations/%s/services/%s", config.Project, config.Region, serviceName)
+		got, err := services.Get(qualified).Do()
+		if err != nil {
+			return fmt.Errorf("post-apply read of %s failed: %s", qualified, err)
+		}
+		if len(got.Template.Containers) == 0 {
+			return fmt.Errorf("service %s has no containers", qualified)
+		}
+		if got.Template.Containers[0].Image != want {
+			return fmt.Errorf("granular updateMask did not preserve out-of-band image: got %q, want %q", got.Template.Containers[0].Image, want)
+		}
+		return nil
+	}
 }
