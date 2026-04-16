@@ -25,6 +25,7 @@ base_url: 'projects/{{project}}/locations/{{location}}/services'
 self_link: 'projects/{{project}}/locations/{{location}}/services/{{name}}'
 create_url: 'projects/{{project}}/locations/{{location}}/services?serviceId={{name}}'
 update_verb: 'PATCH'
+update_mask: true
 import_format:
   - 'projects/{{project}}/locations/{{location}}/services/{{name}}'
 timeouts:
@@ -48,6 +49,7 @@ iam_policy:
     - '{{name}}'
 custom_code:
   pre_delete: 'templates/terraform/pre_delete/cloudrunv2_service_deletion_policy.go.tmpl'
+  pre_update: 'templates/terraform/pre_update/cloudrunv2_service_granular_update_mask.go.tmpl'
 taint_resource_on_failed_create: true
 examples:
   - name: 'cloudrunv2_service_basic'

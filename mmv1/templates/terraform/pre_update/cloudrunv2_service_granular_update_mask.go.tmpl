@@ -1,0 +1,88 @@
+// Cloud Run v2 API accepts google.protobuf.FieldMask paths. The default
+// generator emits only top-level names (e.g. "template"), which causes the
+// server to replace the entire template and undo externally-modified nested
+// fields (see https://github.com/hashicorp/terraform-provider-google/issues/25464).
+// Expand "template" into granular paths based on which Terraform attributes
+// have actually changed. Repeated fields (containers, volumes,
+// vpcAccess.networkInterfaces) may only appear as the final segment of a
+// FieldMask path, so the finest granularity for those is the array itself.
+newUpdateMask := []string{}
+templateExpansions := []string{}
+
+if d.HasChange("template.0.revision") {
+    templateExpansions = append(templateExpansions, "template.revision")
+}
+if d.HasChange("template.0.labels") {
+    templateExpansions = append(templateExpansions, "template.labels")
+}
+if d.HasChange("template.0.annotations") {
+    templateExpansions = append(templateExpansions, "template.annotations")
+}
+if d.HasChange("template.0.scaling.0.min_instance_count") {
+    templateExpansions = append(templateExpansions, "template.scaling.minInstanceCount")
+}
+if d.HasChange("template.0.scaling.0.max_instance_count") {
+    templateExpansions = append(templateExpansions, "template.scaling.maxInstanceCount")
+}
+if d.HasChange("template.0.vpc_access.0.connector") {
+    templateExpansions = append(templateExpansions, "template.vpcAccess.connector")
+}
+if d.HasChange("template.0.vpc_access.0.egress") {
+    templateExpansions = append(templateExpansions, "template.vpcAccess.egress")
+}
+if d.HasChange("template.0.vpc_access.0.network_interfaces") {
+    templateExpansions = append(templateExpansions, "template.vpcAccess.networkInterfaces")
+}
+if d.HasChange("template.0.timeout") {
+    templateExpansions = append(templateExpansions, "template.timeout")
+}
+if d.HasChange("template.0.service_account") {
+    templateExpansions = append(templateExpansions, "template.serviceAccount")
+}
+if d.HasChange("template.0.containers") {
+    templateExpansions = append(templateExpansions, "template.containers")
+}
+if d.HasChange("template.0.volumes") {
+    templateExpansions = append(templateExpansions, "template.volumes")
+}
+if d.HasChange("template.0.execution_environment") {
+    templateExpansions = append(templateExpansions, "template.executionEnvironment")
+}
+if d.HasChange("template.0.encryption_key") {
+    templateExpansions = append(templateExpansions, "template.encryptionKey")
+}
+if d.HasChange("template.0.max_instance_request_concurrency") {
+    templateExpansions = append(templateExpansions, "template.maxInstanceRequestConcurrency")
+}
+if d.HasChange("template.0.session_affinity") {
+    templateExpansions = append(templateExpansions, "template.sessionAffinity")
+}
+if d.HasChange("template.0.service_mesh.0.mesh") {
+    templateExpansions = append(templateExpansions, "template.serviceMesh.mesh")
+}
+if d.HasChange("template.0.node_selector.0.accelerator") {
+    templateExpansions = append(templateExpansions, "template.nodeSelector.accelerator")
+}
+if d.HasChange("template.0.gpu_zonal_redundancy_disabled") {
+    templateExpansions = append(templateExpansions, "template.gpuZonalRedundancyDisabled")
+}
+if d.HasChange("template.0.health_check_disabled") {
+    templateExpansions = append(templateExpansions, "template.healthCheckDisabled")
+}
+
+for _, mask := range updateMask {
+    if mask == "template" {
+        if len(templateExpansions) > 0 {
+            newUpdateMask = append(newUpdateMask, templateExpansions...)
+        } else {
+            newUpdateMask = append(newUpdateMask, "template")
+        }
+        continue
+    }
+    newUpdateMask = append(newUpdateMask, mask)
+}
+
+url, err = transport_tpg.AddQueryParams(url, map[string]string{"updateMask": strings.Join(newUpdateMask, ",")})
+if err != nil {
+    return err
+}
