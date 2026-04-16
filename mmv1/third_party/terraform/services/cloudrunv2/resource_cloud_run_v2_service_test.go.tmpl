@@ -2086,3 +2086,96 @@ func testAccCheckCloudRunV2ServiceImageEquals(t *testing.T, serviceName, want st
 		return nil
 	}
 }
+
+// The headline scenario from hashicorp/terraform-provider-google#25464: a user
+// has `ignore_changes = [template[0].containers[0].image]` and another
+// process (CI/CD, gcloud) updates the image. They then update an env var on
+// the container and re-apply. The granular updateMask emits
+// `template.containers` (finest legal granularity for a repeated field), and
+// because TF refreshes container state before planning, the PATCH body
+// carries the out-of-band image — so the env change applies and the image
+// is preserved.
+func TestAccCloudRunV2Service_granularUpdateMaskPreservesImageOnEnvChange(t *testing.T) {
+	acctest.SkipIfVcr(t)
+	t.Parallel()
+
+	suffix := acctest.RandString(t, 10)
+	serviceName := fmt.Sprintf("tf-test-cloudrun-mask-env-%s", suffix)
+	externalImage := "us-docker.pkg.dev/cloudrun/container/whereami"
+
+	context := map[string]interface{}{
+		"random_suffix": suffix,
+		"env_value":     "v1",
+	}
+	contextUpdated := map[string]interface{}{
+		"random_suffix": suffix,
+		"env_value":     "v2",
+	}
+
+	acctest.VcrTest(t, resource.TestCase{
+		PreCheck:                 func() { acctest.AccTestPreCheck(t) },
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories(t),
+		CheckDestroy:             testAccCheckCloudRunV2ServiceDestroyProducer(t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccCloudRunV2Service_granularUpdateMaskWithEnv(context),
+			},
+			{
+				PreConfig: testAccCloudRunV2Service_externallyUpdateImage(t, serviceName, externalImage),
+				Config:    testAccCloudRunV2Service_granularUpdateMaskWithEnv(contextUpdated),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckCloudRunV2ServiceImageEquals(t, serviceName, externalImage),
+					testAccCheckCloudRunV2ServiceContainerEnv(t, serviceName, "MY_VAR", "v2"),
+				),
+			},
+		},
+	})
+}
+
+func testAccCloudRunV2Service_granularUpdateMaskWithEnv(context map[string]interface{}) string {
+	return acctest.Nprintf(`
+resource "google_cloud_run_v2_service" "default" {
+  name     = "tf-test-cloudrun-mask-env-%{random_suffix}"
+  location = "us-central1"
+  deletion_protection = false
+
+  template {
+    containers {
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
+      env {
+        name  = "MY_VAR"
+        value = "%{env_value}"
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
+}
+`, context)
+}
+
+func testAccCheckCloudRunV2ServiceContainerEnv(t *testing.T, serviceName, key, want string) resource.TestCheckFunc {
+	return func(_ *terraform.State) error {
+		config := acctest.GoogleProviderConfig(t)
+		services := config.NewCloudRunV2Client(config.UserAgent).Projects.Locations.Services
+		qualified := fmt.Sprintf("projects/%s/locations/%s/services/%s", config.Project, config.Region, serviceName)
+		got, err := services.Get(qualified).Do()
+		if err != nil {
+			return fmt.Errorf("post-apply read of %s failed: %s", qualified, err)
+		}
+		if len(got.Template.Containers) == 0 {
+			return fmt.Errorf("service %s has no containers", qualified)
+		}
+		for _, e := range got.Template.Containers[0].Env {
+			if e.Name == key {
+				if e.Value != want {
+					return fmt.Errorf("env %s: got %q, want %q", key, e.Value, want)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("env %s not found on container[0]", key)
+	}
+}
