@@ -1992,7 +1992,7 @@ func TestAccCloudRunV2Service_granularUpdateMaskRespectsIgnoreChanges(t *testing
 
 	suffix := acctest.RandString(t, 10)
 	serviceName := fmt.Sprintf("tf-test-cloudrun-mask-%s", suffix)
-	externalImage := "us-docker.pkg.dev/cloudrun/container/whereami"
+	externalImage := "gcr.io/google-samples/hello-app:1.0"
 
 	context := map[string]interface{}{
 		"random_suffix":      suffix,
@@ -2101,7 +2101,7 @@ func TestAccCloudRunV2Service_granularUpdateMaskPreservesImageOnEnvChange(t *tes
 
 	suffix := acctest.RandString(t, 10)
 	serviceName := fmt.Sprintf("tf-test-cloudrun-mask-env-%s", suffix)
-	externalImage := "us-docker.pkg.dev/cloudrun/container/whereami"
+	externalImage := "gcr.io/google-samples/hello-app:1.0"
 
 	context := map[string]interface{}{
 		"random_suffix": suffix,
